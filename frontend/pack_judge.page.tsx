@@ -2,7 +2,7 @@ import { $, addPage, NamedPage } from '@hydrooj/ui-default'
 import axios from 'axios'
 import { Tdoc } from 'hydrooj/src/interface';
 import 'layui'
-declare const layui:any;
+declare const layui: any;
 let rid = ``;
 addPage(new NamedPage(['contest_pack_judge'], () => {
     console.log(UiContext);
@@ -13,16 +13,24 @@ addPage(new NamedPage(['contest_pack_judge'], () => {
             alert(`Please select a file`);
             return;
         }
+        let problemDirs = ($(`#problemDirs`)[0] as HTMLInputElement).value.split(`,`).map(e => e.trim());
+        if (problemDirs.length !== UiContext.tdoc.pids.length) {
+            alert(`Please input the same number as problems, need ${UiContext.tdoc.pids.length}`);
+            return;
+        }
         let fileReader = new FileReader();
         fileReader.onload = (e) => {
-            let form = new FormData()
-            form.append('file', e.target!.result as string);
-            form.append('operation', 'upload');
-            axios.post(`/contest/${tdoc.docId}/pack`, form, { headers: { 'Content-Type': 'multipart/form-data' } }).then((data) => {
+
+            axios.post(`/contest/${tdoc.docId}/pack`, {
+                operation: 'upload',
+                file: e.target.result,
+                problemDirs,
+            }, { headers: { 'Content-Type': 'application/json' } }).then((data) => {
+                $(`#startJudge`).attr(`style`, `display: inline-block;`);
                 rid = data.data.rid;
                 const namelist: Record<string, string>[] = data.data.namelist
                 const tree = layui.tree;
-                // 渲染
+                // 渲染 namelist
                 tree.render({
                     elem: '#ID-tree-demo',
                     data: namelist.map(e => {
@@ -31,7 +39,7 @@ addPage(new NamedPage(['contest_pack_judge'], () => {
                             id: e.id,
                             children:
                                 (() => {
-                                    let p:Record<string,string>[] = []
+                                    let p: Record<string, string>[] = []
                                     for (let x of Object.keys(e)) {
                                         p.push({
                                             title: `${x}: ${e[x]}`,
@@ -52,5 +60,31 @@ addPage(new NamedPage(['contest_pack_judge'], () => {
             })
         }
         fileReader.readAsDataURL(file);
-    })
+    });
+    ($(`#startJudge`)[0] as HTMLButtonElement).addEventListener(`click`, () => {
+        axios.post(`/contest/${tdoc.docId}/pack`, {
+            operation: 'startjudge',
+            packJudgeId: rid,
+        }, {
+            headers: { 'Content-Type': 'application/json' }
+        }).then((res) => {
+            console.log(res.data);
+            setTimeout(() => {
+                axios.post(`/contest/${tdoc.docId}/pack`, {
+                    operation: `pack_judge_result`,
+                    packJudgeId: rid
+                }).then((data) => {
+                    console.log(data.data);
+                })
+            }, 2000);
+            // alert(`Start judge successfully`);
+        });
+    });
+
+}))
+
+addPage(new NamedPage(['contest_detail', 'contest_problemlist', 'contest_scoreboard'], () => {
+    $(".nav__list.nav__list--main .nav_more").before(`
+         <li class="nav__list-item"><a href="/contest/${UiContext.tdoc._id}/pack" class="nav__item">批量评测</a></li>
+        `)
 }))

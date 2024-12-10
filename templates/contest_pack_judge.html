@@ -9,14 +9,41 @@
 <div class="row" data-sticky-parent>
     <div class="medium-8 columns">
         <div class="section visible">
+            <div class="section__header">
+                <h3>{{UiContext.tdoc.title}} —— 批量评测</h3>
+            </div>
             <div class="section__body typo richmedia">
-                <input id="pack_judge_file" type="file" accept=".zip"/>
-                <button id="submit">提交</button>
+                <input id="pack_judge_file" type="file" accept=".zip" />
+                <br/>
+                <div>
+                    <p>请按顺序输入选手目录各题目文件夹名称，半角逗号分隔</p>
+                    <br/>
+                    <div style="width:40%" >
+                        <input id="problemDirs" class="layui-input" placeholder="T1,T2,T3..."></input>
+                    </div>
+                </div>
+                <br/>
+                <div>
+                    <button id="submit" class="layui-btn layui-bg-blue">提交</button>
+                    <button id="startJudge" class="layui-btn layui-bg-green" style="display:none">开始评测</button>
+                </div>
             </div>
         </div>
         <div class="section visible">
+            <div class="section__header">
+                <h3>namelist / 评测名单</h3>
+            </div>
             <div class="section__body typo richmedia">
-                <div id="ID-tree-demo" style="max-height:60vh;overflow-y:scroll"></div>
+                <div id="ID-tree-demo" style="max-height:60vh;overflow-y:scroll">
+                    <p>请先上传压缩包</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="medium-4 columns">
+        <div class="section visible">
+            <div class="section__body typo richmedia">
+                <p>压缩包需包含 namelist.csv，首行<b>不要</b>为列名称，且第一列为准考证号，第二列为姓名</p>
             </div>
         </div>
     </div>

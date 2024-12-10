@@ -1,6 +1,7 @@
 import AdmZip from "adm-zip";
 import { createReadStream, existsSync, ReadStream } from "fs-extra";
 import iconv from 'iconv-lite';
+import jschardet from 'jschardet';
 /**
  * 将数据URL转换为Uint8Array。
  * @param dataurl - 包含数据的data URL字符串。
@@ -64,7 +65,8 @@ export function readGBKFile(filePath: string) {
             stream.on('end', () => {
                 const buf = Buffer.from(data, 'binary');
                 // 获得正常的字符串，没有乱码
-                const str = iconv.decode(buf, 'GBK');
+                let det = jschardet.detect(buf);
+                const str = iconv.decode(buf, det.encoding);
                 resolve(str);
             });
         } catch (err) {

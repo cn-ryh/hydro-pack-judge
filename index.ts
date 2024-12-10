@@ -1,10 +1,10 @@
 // @noErrors
 // @module: esnext
 // @filename: index.ts
-import { ensureDirSync, readdirSync, statSync, writeFileSync } from 'fs-extra';
+import { ensureDirSync, existsSync, readdirSync, statSync, writeFileSync } from 'fs-extra';
 import csv from 'csvtojson'
 import { v7 } from 'uuid'
-import { RecordModel as record } from 'hydrooj'
+import { RecordModel as record, Tdoc } from 'hydrooj'
 import {
     ContestModel,
     Context,
@@ -15,12 +15,13 @@ declare module 'hydrooj' {
         packJudge: PackJudge; // 声明数据表类型
     }
 }
+
 import path from 'path';
 import { PackJudge } from './src/model';
 import config from './config';
 import { dataURLToU8Array, readGBKFile, unzip } from './src/tools';
+import { WithId } from 'mongodb';
 const coll = db.collection('packJudge');
-
 
 
 class TestHander extends Handler {
@@ -30,6 +31,36 @@ class TestHander extends Handler {
             this.response.body = {
                 test: 'test', id: body.id, tdoc
             };
+            this.response.body.overrideNav = [
+                {
+                    name: 'contest_main',
+                    args: {},
+                    displayName: 'Back to contest list',
+                    checker: () => true,
+                },
+                {
+                    name: 'contest_detail',
+                    displayName: tdoc.title,
+                    args: { tid: new ObjectID(body.id), prefix: 'contest_detail' },
+                    checker: () => true,
+                },
+                {
+                    name: 'contest_problemlist',
+                    args: { tid: new ObjectID(body.id), prefix: 'contest_problemlist' },
+                    checker: () => true,
+                },
+                {
+                    name: 'contest_scoreboard',
+                    args: { tid: new ObjectID(body.id), prefix: 'contest_scoreboard' },
+                    checker: () => ContestModel.canShowScoreboard.call(this, tdoc, true),
+                },
+                {
+                    name: 'contest_packjudge',
+                    displayName: '批量评测',
+                    args: { id: new ObjectID(body.id), prefix: 'contest_packjudge' },
+                    checker: () => true,
+                }
+            ]
             this.response.template = 'contest_pack_judge.html';
         }
         catch (err) {
@@ -37,7 +68,100 @@ class TestHander extends Handler {
         }
         console.log(body.id);
     }
+    renderTitle(): string {
+        return `批量评测`;
+    }
+    @param('packJudgeId', Types.String)
+    async postPackJudgeResult(_:any,packJudgeId: string)
+    {
+        let pjudge = await coll.findOne({ _id: packJudgeId });
+        for(let user of Object.keys(pjudge.judgeRecords))
+        {
+            let userRecord = pjudge.judgeRecords[user];
+            for(let problem of Object.keys(userRecord))
+            {
+                let recordId = userRecord[problem];
+                if(recordId && !recordId.equals(new ObjectID(0)))
+                {
+                    let recordDoc = await record.get(recordId);
+                    console.log(recordDoc.judgeTexts);
+                    console.log(recordDoc.compilerTexts);
+                    console.log(recordDoc.status);
+                    console.log(recordDoc.testCases);
+                    // recordDoc.status
+                }
+            }
+        }
+    }
+    @param('packJudgeId', Types.String)
+    async postStartjudge(_: any, packJudgeId: string) {
+        let pjudge: WithId<PackJudge>;
+        try {
+            pjudge = await coll.findOne({ _id: packJudgeId });
+        }
+        catch (err) {
+            throw (new Error('PackJudge Record not found'));
+        }
+        let filePath = path.join(pjudge.filePath, `package`);
+        let files = readdirSync(filePath);
+        let contest: Tdoc
+        try {
+            contest = await ContestModel.get(this.domain._id, new ObjectID(pjudge.contestId));
+        }
+        catch (err) {
+            throw (new Error('Contest not found'));
+        }
+        let pids = contest.pids;
+        if (files.length === 1 && statSync(path.join(filePath, files[0])).isDirectory()) {
+            filePath = path.join(filePath, files[0]);
+        }
+        let hasAnswerDir = files.filter(x => (x === 'answer' || x === 'answers'));
+        if (hasAnswerDir.length > 0) {
+            filePath = path.join(filePath, hasAnswerDir[0]);
+        }
+        else {
+            throw (new Error('No answer directory found'));
+        }
 
+        let problemDirs = pjudge.problemDirs;
+        let judgeRecords: Record<string, Record<string, ObjectID>> = {};
+        const nameList = pjudge.nameList;
+        for (let user of nameList) {
+            const uid = user.id;
+            judgeRecords[uid] = {};
+
+            const userPackPath = path.join(filePath, uid);
+            if (!existsSync(userPackPath) || !statSync(userPackPath).isDirectory()) {
+                for (let problem of problemDirs) {
+                    judgeRecords[uid][problem] = new ObjectID(0);
+                }
+                continue;
+            }
+            for (let i = 0; i < problemDirs.length; i++) {
+                let problem = problemDirs[i];
+                if (existsSync(path.join(userPackPath, problem, `${problem}.cpp`))) {
+                    let code = await readGBKFile(path.join(userPackPath, problem, `${problem}.cpp`));
+                    code = `// packjudge: ${packJudgeId}
+// user: ${uid}
+// problem: ${problem}
+
+` + code;
+                    judgeRecords[uid][problem] = (await record.add(this.domain._id, pids[i], config.judger.uid, `cc.cc14o2`, code, true, {
+                        type: `judge`
+                    }));
+                }
+            }
+            coll.findOneAndUpdate({ _id: pjudge._id }, {
+                $set: {
+                    judgeRecords: judgeRecords
+                }
+            }, { upsert: false });
+        }
+        this.response.type = `json`;
+        this.response.body = {
+            judgeRecords
+        };
+    }
     async scanJudgePack(_id: string) {
         return new Promise<void>(async (resolve, reject) => {
             await coll.findOne({ _id: _id }).then(async (doc) => {
@@ -55,6 +179,7 @@ class TestHander extends Handler {
                 if (!packs.includes('namelist.csv')) {
                     reject(new Error('namelist.csv not found'));
                 }
+
                 // 读取名单并插入数据库
                 try {
                     let namelist = await csv({
@@ -79,9 +204,11 @@ class TestHander extends Handler {
         const filePath = path.join(config.tmpdir, uuid);
         try {
             await coll.insertOne({
+                domain: this.domain._id,
                 _id: uuid,
                 contestId,
                 filePath,
+                judgeRecords: {},
                 judgeResult: {},
                 problemDirs
             });
@@ -94,15 +221,15 @@ class TestHander extends Handler {
         return uuid;
     }
     @param('file', Types.String)
-    async postUpload(_body: Record<string, any>, file: string) {
+    @param('problemDirs', Types.ArrayOf<[(v: any) => true]>)
+    async postUpload(_body: Record<string, any>, file: string, problemDirs: string[]) {
         this.response.type = `json`;
         let rid = ``;
         this.response.body = {
-            rid: rid = await this.createPackJudge(_body.id, dataURLToU8Array(file), [
-
-            ]),
-            namelist: (await coll.findOne({_id:rid})).nameList
+            rid: rid = await this.createPackJudge(_body.id, dataURLToU8Array(file), problemDirs),
+            namelist: (await coll.findOne({ _id: rid })).nameList
         }
+
     }
 
 }
