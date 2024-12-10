@@ -1,0 +1,24 @@
+{% extends "layout/basic.html" %}
+{% import "components/contest.html" as contest with context %}
+{% import "components/record.html" as record with context %}
+{% import "components/problem.html" as problem with context %}
+{% block content %}
+{{ set(UiContext, 'tdoc', tdoc) }}
+{{ set(UiContext, 'tsdoc', tsdoc) }}
+<link href="//cdnjs.cloudflare.com/ajax/libs/layui/2.9.20/css/layui.min.css" rel="stylesheet">
+<div class="row" data-sticky-parent>
+    <div class="medium-8 columns">
+        <div class="section visible">
+            <div class="section__body typo richmedia">
+                <input id="pack_judge_file" type="file" accept=".zip"/>
+                <button id="submit">提交</button>
+            </div>
+        </div>
+        <div class="section visible">
+            <div class="section__body typo richmedia">
+                <div id="ID-tree-demo" style="max-height:60vh;overflow-y:scroll"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
