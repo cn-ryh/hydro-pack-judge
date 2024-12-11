@@ -4,7 +4,7 @@
 import { ensureDirSync, existsSync, readdirSync, statSync, writeFileSync } from 'fs-extra';
 import csv from 'csvtojson'
 import { v7 } from 'uuid'
-import { RecordModel as record, Tdoc } from 'hydrooj'
+import { RecordModel as record, sleep, Tdoc } from 'hydrooj'
 import {
     ContestModel,
     Context,
@@ -22,6 +22,7 @@ import config from './config';
 import { dataURLToU8Array, readGBKFile, unzip } from './src/tools';
 import { WithId } from 'mongodb';
 const coll = db.collection('packJudge');
+
 
 
 class TestHander extends Handler {
@@ -72,95 +73,119 @@ class TestHander extends Handler {
         return `批量评测`;
     }
     @param('packJudgeId', Types.String)
-    async postPackJudgeResult(_:any,packJudgeId: string)
-    {
+    @param('idx', Types.Int)
+    async postPackJudgeResult(_: any, packJudgeId: string, idx: number) {
         let pjudge = await coll.findOne({ _id: packJudgeId });
-        for(let user of Object.keys(pjudge.judgeRecords))
-        {
+        let judgeResult: Record<string, Record<string, any>> = {};
+        for (let user of Object.keys(pjudge.judgeRecords)) {
             let userRecord = pjudge.judgeRecords[user];
-            for(let problem of Object.keys(userRecord))
-            {
+            judgeResult[user] = {};
+            for (let problem of Object.keys(userRecord)) {
                 let recordId = userRecord[problem];
-                if(recordId && !recordId.equals(new ObjectID(0)))
+                // 还没扫描到的
+                if(recordId === null || recordId === undefined)
                 {
+                    judgeResult[user][problem] = null
+                }
+                // 扫描过，代码不存在的
+                else if (recordId.equals(new ObjectID(0))) {
+
+                }
+                else{
                     let recordDoc = await record.get(recordId);
-                    console.log(recordDoc.judgeTexts);
-                    console.log(recordDoc.compilerTexts);
-                    console.log(recordDoc.status);
-                    console.log(recordDoc.testCases);
-                    // recordDoc.status
+                    judgeResult[user][problem] = {
+                        recordId: recordId,
+                        score: recordDoc.score,
+                        time: recordDoc.time,
+                        memory: recordDoc.memory,
+                        status: recordDoc.status
+                    }
                 }
             }
+        }
+        this.response.type = `json`;
+        this.response.body = {
+            judgeResult,
+            idx
         }
     }
-    @param('packJudgeId', Types.String)
-    async postStartjudge(_: any, packJudgeId: string) {
-        let pjudge: WithId<PackJudge>;
-        try {
-            pjudge = await coll.findOne({ _id: packJudgeId });
-        }
-        catch (err) {
-            throw (new Error('PackJudge Record not found'));
-        }
-        let filePath = path.join(pjudge.filePath, `package`);
-        let files = readdirSync(filePath);
-        let contest: Tdoc
-        try {
-            contest = await ContestModel.get(this.domain._id, new ObjectID(pjudge.contestId));
-        }
-        catch (err) {
-            throw (new Error('Contest not found'));
-        }
-        let pids = contest.pids;
-        if (files.length === 1 && statSync(path.join(filePath, files[0])).isDirectory()) {
-            filePath = path.join(filePath, files[0]);
-        }
-        let hasAnswerDir = files.filter(x => (x === 'answer' || x === 'answers'));
-        if (hasAnswerDir.length > 0) {
-            filePath = path.join(filePath, hasAnswerDir[0]);
-        }
-        else {
-            throw (new Error('No answer directory found'));
-        }
-
-        let problemDirs = pjudge.problemDirs;
-        let judgeRecords: Record<string, Record<string, ObjectID>> = {};
-        const nameList = pjudge.nameList;
-        for (let user of nameList) {
-            const uid = user.id;
-            judgeRecords[uid] = {};
-
-            const userPackPath = path.join(filePath, uid);
-            if (!existsSync(userPackPath) || !statSync(userPackPath).isDirectory()) {
-                for (let problem of problemDirs) {
-                    judgeRecords[uid][problem] = new ObjectID(0);
-                }
-                continue;
+    startJudge(packJudgeId: string) {
+        return new Promise<void>(async (resolve, reject) => {
+            let pjudge: WithId<PackJudge>;
+            try {
+                pjudge = await coll.findOne({ _id: packJudgeId });
             }
-            for (let i = 0; i < problemDirs.length; i++) {
-                let problem = problemDirs[i];
-                if (existsSync(path.join(userPackPath, problem, `${problem}.cpp`))) {
-                    let code = await readGBKFile(path.join(userPackPath, problem, `${problem}.cpp`));
-                    code = `// packjudge: ${packJudgeId}
+            catch (err) {
+                throw (new Error('PackJudge Record not found'));
+            }
+            let filePath = path.join(pjudge.filePath, `package`);
+            let files = readdirSync(filePath);
+            let contest: Tdoc
+            try {
+                contest = await ContestModel.get(this.domain._id, new ObjectID(pjudge.contestId));
+            }
+            catch (err) {
+                throw (new Error('Contest not found'));
+            }
+            let pids = contest.pids;
+            if (files.length === 1 && statSync(path.join(filePath, files[0])).isDirectory()) {
+                filePath = path.join(filePath, files[0]);
+            }
+            let hasAnswerDir = files.filter(x => (x === 'answer' || x === 'answers'));
+            if (hasAnswerDir.length > 0) {
+                filePath = path.join(filePath, hasAnswerDir[0]);
+            }
+            else {
+                throw (new Error('No answer directory found'));
+            }
+
+            let problemDirs = pjudge.problemDirs;
+            let judgeRecords: Record<string, Record<string, ObjectID>> = {};
+            const nameList = pjudge.nameList;
+            for (let user of nameList) {
+                const uid = user.id;
+                judgeRecords[uid] = {};
+
+                const userPackPath = path.join(filePath, uid);
+                if (!existsSync(userPackPath) || !statSync(userPackPath).isDirectory()) {
+                    for (let problem of problemDirs) {
+                        judgeRecords[uid][problem] = new ObjectID(0);
+                    }
+                    continue;
+                }
+                for (let i = 0; i < problemDirs.length; i++) {
+                    let problem = problemDirs[i];
+                    if (existsSync(path.join(userPackPath, problem, `${problem}.cpp`))) {
+                        let code = await readGBKFile(path.join(userPackPath, problem, `${problem}.cpp`));
+                        code = `// packjudge: ${packJudgeId}
 // user: ${uid}
 // problem: ${problem}
 
 ` + code;
-                    judgeRecords[uid][problem] = (await record.add(this.domain._id, pids[i], config.judger.uid, `cc.cc14o2`, code, true, {
-                        type: `judge`
-                    }));
+                        judgeRecords[uid][problem] = (await record.add(this.domain._id, pids[i], config.judger.uid, `cc.cc14o2`, code, true, {
+                            type: `judge`
+                        }));
+                        await sleep(500);
+                    }
                 }
+                coll.findOneAndUpdate({ _id: pjudge._id }, {
+                    $set: {
+                        judgeRecords: judgeRecords
+                    }
+                }, { upsert: false });
             }
-            coll.findOneAndUpdate({ _id: pjudge._id }, {
-                $set: {
-                    judgeRecords: judgeRecords
-                }
-            }, { upsert: false });
-        }
-        this.response.type = `json`;
-        this.response.body = {
-            judgeRecords
-        };
+        })
+    }
+    @param('packJudgeId', Types.String)
+    async postStartjudge(_: any, packJudgeId: string) {
+        return new Promise<void>(async (resolve) => {
+            this.response.body = {
+                code:0,
+                msg: `Judge Start!`
+            }
+            resolve();
+            this.startJudge(packJudgeId);
+        })
     }
     async scanJudgePack(_id: string) {
         return new Promise<void>(async (resolve, reject) => {
